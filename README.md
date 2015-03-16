@@ -29,7 +29,7 @@ func main() {
 
 	bc.Stop()
 
-```
 }
+```
 
 Please feel free to send pull requests for new stuff, bug fixes etc
