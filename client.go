@@ -24,7 +24,8 @@ type Client struct {
 	m       sync.Mutex // mutex for protecting Metrics
 	metrics []*Metric  // Holds the current set of metrics ready for sending at every interval
 
-	stop chan bool
+	stop    chan bool
+	stopped chan bool
 }
 
 // NewClient returns a client that can send data to a bucky server
@@ -45,6 +46,7 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		logger:   log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
 		interval: intDur,
 		stop:     make(chan bool, 1),
+		stopped:  make(chan bool, 1),
 	}
 
 	// start the sender
@@ -137,6 +139,7 @@ func (c *Client) sender() (err error) {
 
 			case <-c.stop:
 				log.Println("Shutting down bucky client")
+				c.stopped <- true
 				break
 			}
 
@@ -149,8 +152,12 @@ func (c *Client) sender() (err error) {
 }
 
 func (c *Client) Stop() {
-
+	log.Println("Stopping bucky client")
 	c.stop <- true
+
+	// Wait until it actually stops
+	<-c.stopped
+	log.Println("Client stopped")
 }
 
 // Metric represents a metric to be sent over the wire
