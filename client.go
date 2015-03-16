@@ -4,6 +4,7 @@ package buckyclient
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -27,6 +28,10 @@ type Client struct {
 	stop    chan bool
 	stopped chan bool
 }
+
+var (
+	ErrNoMetrics = errors.New("No metrics to flush")
+)
 
 // NewClient returns a client that can send data to a bucky server
 // It takes an interval value in seconds
@@ -83,47 +88,51 @@ func (c *Client) setLogger(logger *log.Logger) {
 
 // flush actually sends the data. can be called after
 // a specific time interval, or when stopping the client
-func (c *Client) flush() {
-	if len(c.metrics) > 0 {
+func (c *Client) flush() error {
+	if len(c.metrics) == 0 {
+		return ErrNoMetrics
+	}
 
-		// collect all the metrics
-		c.m.Lock()
-		mArr := make([]*Metric, len(c.metrics))
-		count := copy(mArr, c.metrics)
-		// clear the slice - we don't really know what it'll look like next time so set to a new array to have
-		// to have it garbage collected
-		c.metrics = make([]*Metric, 0)
-		c.m.Unlock()
+	// collect all the metrics
+	c.m.Lock()
+	mArr := make([]*Metric, len(c.metrics))
+	count := copy(mArr, c.metrics)
+	// clear the slice - we don't really know what it'll look like next time so set to a new array to have
+	// to have it garbage collected
+	c.metrics = make([]*Metric, 0)
+	c.m.Unlock()
 
-		log.Printf("%d metrics received\n", count)
+	log.Printf("%d metrics received\n", count)
 
-		// Process them into the correct format
-		output := ""
-		for _, v := range mArr {
-			output = output + v.String() + "\n"
-		}
+	// Process them into the correct format
+	output := ""
+	for _, v := range mArr {
+		output = output + v.String() + "\n"
+	}
 
-		log.Println("sending - ", output)
+	log.Println("sending - ", output)
 
-		b := bytes.NewBufferString(output)
-		// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
-		body := ioutil.NopCloser(b)
+	b := bytes.NewBufferString(output)
+	// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
+	body := ioutil.NopCloser(b)
 
-		// Send the string on to the server
-		resp, err := c.http.Post(c.hostURL, "text/plain", body)
+	// Send the string on to the server
+	resp, err := c.http.Post(c.hostURL, "text/plain", body)
 
-		if err != nil {
-			log.Println("http client - ", err)
-		}
+	if err != nil {
+		log.Println("http client - ", err)
+		return err
+	}
 
-		if resp.StatusCode > 299 {
-			log.Println("status code above 200 received - ", resp.StatusCode)
-			// Could just drop the data here - not much point sending it on
-			// but we should probably tweak the interval
+	if resp.StatusCode > 299 {
+		log.Println("status code above 200 received - ", resp.StatusCode)
+		// Could just drop the data here - not much point sending it on
+		// but we should probably tweak the interval
 
-		}
+		return fmt.Errorf("Non-success HTTP Status Code (%d)", resp.StatusCode)
+	}
 
-	} // length test
+	return nil
 }
 
 // Listen starts the client listening for metrics on the chan
