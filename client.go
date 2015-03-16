@@ -114,6 +114,7 @@ func (c *Client) flush() {
 
 		if err != nil {
 			log.Println("http client - ", err)
+			return
 		}
 
 		if resp.StatusCode > 299 {
