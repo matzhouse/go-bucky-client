@@ -1,37 +1,75 @@
+// buckyclient can send metrics to a buckyserver over http
+// see https://github.com/HubSpot/BuckyServer for more information
 package buckyclient
 
 import (
+	"bytes"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
-type Metric struct {
-	name  string
-	value string
-	unit  string
-}
-
+// Client contains all the data necessary for sending
+// the metrics to the buckyserver
 type Client struct {
-	host     string
-	http     *http.Client
-	logger   *log.Logger
-	interval time.Duration
+	hostURL  string        // full URL of the buckyserver
+	http     *http.Client  // Standard http client
+	logger   *log.Logger   // logger
+	interval time.Duration // Interval in seconds between sending metrics to buckyserver
+
+	m       sync.Mutex // mutex for protecting Metrics
+	metrics []*Metric  // Holds the current set of metrics ready for sending at every interval
+
+	stop chan bool
 }
 
 // NewClient returns a client that can send data to a bucky server
 // It takes an interval value in seconds
-func NewClient(host string, interval int) *Client {
+func NewClient(host string, interval int) (cl *Client, err error) {
 
 	intSecond := fmt.Sprintf("%ds", interval)
 
-	return &Client{
-		http:     &http.Client{},                    // http client
-		logger:   log.New(os.Stderr, "", LstdFlags), // Stderr logging
-		interval: time.ParseDuration(intSecond),     // sends data ever x seconds
+	intDur, err := time.ParseDuration(intSecond)
+
+	if err != nil {
+		return nil, err
 	}
+
+	cl = &Client{
+		hostURL:  host,
+		http:     &http.Client{},
+		logger:   log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
+		interval: intDur,
+		stop:     make(chan bool, 1),
+	}
+
+	// start the sender
+	cl.sender()
+
+	return cl, nil
+
+}
+
+// Send is used to record a metric and have it send to
+// the bucky server - this is thread safe
+func (c *Client) Send(name, value, unit string) {
+
+	m := &Metric{
+		name:  name,
+		value: value,
+		unit:  unit,
+	}
+
+	// Protect c.Metrics!
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	// Add the new metric - note we are still locked!
+	c.metrics = append(c.metrics, m)
 
 }
 
@@ -43,12 +81,86 @@ func (c *Client) setLogger(logger *log.Logger) {
 
 // Listen starts the client listening for metrics on the chan
 // The chan is returned from this func
-func (c *Client) Listen() (ch chan *Metric) {
+func (c *Client) sender() (err error) {
 
-	ch = make(chan *Metric)
+	//currentInt := c.interval // for the backoff we'll need to use the initial value as a reset
 
-	go func() {
+	go func(c *Client) {
 
-	}()
+		var output string
 
+		for {
+
+			select {
+			case <-time.After(c.interval):
+
+				if len(c.metrics) > 0 {
+
+					// collect all the metrics
+					c.m.Lock()
+					mArr := make([]*Metric, len(c.metrics))
+					count := copy(mArr, c.metrics)
+					// clear the slice - we don't really know what it'll look like next time so set to a new array to have
+					// to have it garbage collected
+					c.metrics = make([]*Metric, 0)
+					c.m.Unlock()
+
+					log.Printf("%d metrics received\n", count)
+
+					// Process them into the correct format
+					output = ""
+					for _, v := range mArr {
+						output = output + v.String() + "\n"
+					}
+
+					log.Println("sending - ", output)
+
+					b := bytes.NewBufferString(output)
+					// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
+					body := ioutil.NopCloser(b)
+
+					// Send the string on to the server
+					resp, err := c.http.Post(c.hostURL, "text/plain", body)
+
+					if err != nil {
+						log.Println("http client - ", err)
+					}
+
+					if resp.StatusCode > 299 {
+						log.Println("status code above 200 received - ", resp.StatusCode)
+						// Could just drop the data here - not much point sending it on
+						// but we should probably tweak the interval
+
+					}
+
+				} // length test
+
+			case <-c.stop:
+				log.Println("Shutting down bucky client")
+				break
+			}
+
+		} // for
+
+	}(c)
+
+	return nil
+
+}
+
+func (c *Client) Stop() {
+
+	c.stop <- true
+}
+
+// Metric represents a metric to be sent over the wire
+type Metric struct {
+	name  string
+	value string
+	unit  string
+}
+
+// String returns a statsd complient string from a metric
+func (m *Metric) String() string {
+	return fmt.Sprintf("%s:%s|%s", m.name, m.value, m.unit)
 }
