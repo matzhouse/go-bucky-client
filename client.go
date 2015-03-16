@@ -81,6 +81,51 @@ func (c *Client) setLogger(logger *log.Logger) {
 	c.logger = logger
 }
 
+// flush actually sends the data. can be called after
+// a specific time interval, or when stopping the client
+func (c *Client) flush() {
+	if len(c.metrics) > 0 {
+
+		// collect all the metrics
+		c.m.Lock()
+		mArr := make([]*Metric, len(c.metrics))
+		count := copy(mArr, c.metrics)
+		// clear the slice - we don't really know what it'll look like next time so set to a new array to have
+		// to have it garbage collected
+		c.metrics = make([]*Metric, 0)
+		c.m.Unlock()
+
+		log.Printf("%d metrics received\n", count)
+
+		// Process them into the correct format
+		output := ""
+		for _, v := range mArr {
+			output = output + v.String() + "\n"
+		}
+
+		log.Println("sending - ", output)
+
+		b := bytes.NewBufferString(output)
+		// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
+		body := ioutil.NopCloser(b)
+
+		// Send the string on to the server
+		resp, err := c.http.Post(c.hostURL, "text/plain", body)
+
+		if err != nil {
+			log.Println("http client - ", err)
+		}
+
+		if resp.StatusCode > 299 {
+			log.Println("status code above 200 received - ", resp.StatusCode)
+			// Could just drop the data here - not much point sending it on
+			// but we should probably tweak the interval
+
+		}
+
+	} // length test
+}
+
 // Listen starts the client listening for metrics on the chan
 // The chan is returned from this func
 func (c *Client) sender() (err error) {
@@ -89,56 +134,20 @@ func (c *Client) sender() (err error) {
 
 	go func(c *Client) {
 
-		var output string
-
 		for {
 
 			select {
 			case <-time.After(c.interval):
 
-				if len(c.metrics) > 0 {
-
-					// collect all the metrics
-					c.m.Lock()
-					mArr := make([]*Metric, len(c.metrics))
-					count := copy(mArr, c.metrics)
-					// clear the slice - we don't really know what it'll look like next time so set to a new array to have
-					// to have it garbage collected
-					c.metrics = make([]*Metric, 0)
-					c.m.Unlock()
-
-					log.Printf("%d metrics received\n", count)
-
-					// Process them into the correct format
-					output = ""
-					for _, v := range mArr {
-						output = output + v.String() + "\n"
-					}
-
-					log.Println("sending - ", output)
-
-					b := bytes.NewBufferString(output)
-					// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
-					body := ioutil.NopCloser(b)
-
-					// Send the string on to the server
-					resp, err := c.http.Post(c.hostURL, "text/plain", body)
-
-					if err != nil {
-						log.Println("http client - ", err)
-					}
-
-					if resp.StatusCode > 299 {
-						log.Println("status code above 200 received - ", resp.StatusCode)
-						// Could just drop the data here - not much point sending it on
-						// but we should probably tweak the interval
-
-					}
-
-				} // length test
+				c.flush()
 
 			case <-c.stop:
 				log.Println("Shutting down bucky client")
+
+				log.Println("Flushing last remaining metrics because of shutdown")
+				c.flush()
+				log.Println("Metrics flushed")
+
 				c.stopped <- true
 				break
 			}
