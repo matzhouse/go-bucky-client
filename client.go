@@ -21,8 +21,8 @@ type Client struct {
 	logger   *log.Logger   // logger
 	interval time.Duration // Interval in seconds between sending metrics to buckyserver
 
-	m       sync.Mutex // mutex for protecting Metrics
-	metrics []*Metric  // Holds the current set of metrics ready for sending at every interval
+	m       sync.Mutex     // mutex for protecting Metrics
+	metrics map[Metric]int // Holds the current set of metrics ready for sending at every interval
 
 	stop    chan bool
 	stopped chan bool
@@ -49,6 +49,8 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		stopped:  make(chan bool, 1),
 	}
 
+	cl.metrics = make(map[Metric]int)
+
 	// start the sender
 	cl.sender()
 
@@ -58,20 +60,15 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
-func (c *Client) Send(name, value, unit string) {
-
-	m := &Metric{
-		name:  name,
-		value: value,
-		unit:  unit,
-	}
+func (c *Client) Send(name string, value int, unit string) {
 
 	// Protect c.Metrics!
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	// Add the new metric - note we are still locked!
-	c.metrics = append(c.metrics, m)
+	key := Metric{name, unit}
+
+	c.metrics[key] = c.metrics[key] + value
 
 }
 
@@ -88,19 +85,13 @@ func (c *Client) flush() {
 
 		// collect all the metrics
 		c.m.Lock()
-		mArr := make([]*Metric, len(c.metrics))
-		count := copy(mArr, c.metrics)
-		// clear the slice - we don't really know what it'll look like next time so set to a new array to have
-		// to have it garbage collected
-		c.metrics = make([]*Metric, 0)
-		c.m.Unlock()
 
-		log.Printf("%d metrics received\n", count)
-
-		// Process them into the correct format
+		var metricstr string
 		output := ""
-		for _, v := range mArr {
-			output = output + v.String() + "\n"
+
+		for k, v := range c.metrics {
+			metricstr = fmt.Sprintf("%s:%d|%s", k.name, v, k.unit)
+			output = output + metricstr + "\n"
 		}
 
 		log.Println("sending - ", output)
@@ -171,12 +162,6 @@ func (c *Client) Stop() {
 
 // Metric represents a metric to be sent over the wire
 type Metric struct {
-	name  string
-	value string
-	unit  string
-}
-
-// String returns a statsd complient string from a metric
-func (m *Metric) String() string {
-	return fmt.Sprintf("%s:%s|%s", m.name, m.value, m.unit)
+	name string
+	unit string
 }

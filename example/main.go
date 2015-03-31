@@ -37,10 +37,10 @@ func main() {
 
 	fmt.Println("sending..")
 
-	bc.Send("test.metric", "1", "c") // test counter
-	bc.Send("test.metric", "2", "c") // test counter
-	bc.Send("test.metric", "4", "c") // test counter
-	bc.Send("test.metric", "3", "c") // test counter
+	bc.Send("test.metric", 1, "c")   // test counter
+	bc.Send("test.metric", 2, "c")   // test counter
+	bc.Send("test.metric.2", 4, "c") // test counter
+	bc.Send("test.metric", 3, "c")   // test counter
 
 	fmt.Println("finished sending")
 
