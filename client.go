@@ -94,11 +94,8 @@ func (c *Client) setLogger(logger *log.Logger) {
 
 func (c *Client) flush() error {
 	if len(c.metrics) == 0 {
-		log.Println("no metrics found")
 		return ErrNoMetrics
 	}
-
-	log.Println("flushing..")
 
 	// collect all the metrics
 	c.m.Lock()
@@ -112,10 +109,7 @@ func (c *Client) flush() error {
 	}
 
 	c.Reset()
-
 	c.m.Unlock()
-
-	log.Println("sending - ", output)
 
 	b := bytes.NewBufferString(output)
 	// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
