@@ -26,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	bc.Send("test.metric", "1", "c") // test counter
+	bc.Count("test.metric", "1") // test counter
 
 	time.Sleep(5 * time.Second) // simple timeout to let the client do it's work
 
