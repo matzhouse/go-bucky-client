@@ -4,6 +4,7 @@ package buckyclient
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -27,6 +28,10 @@ type Client struct {
 	stop    chan bool
 	stopped chan bool
 }
+
+var (
+	ErrNoMetrics = errors.New("No metrics to flush")
+)
 
 // NewClient returns a client that can send data to a bucky server
 // It takes an interval value in seconds
@@ -80,41 +85,48 @@ func (c *Client) setLogger(logger *log.Logger) {
 
 // flush actually sends the data. can be called after
 // a specific time interval, or when stopping the client
-func (c *Client) flush() {
-	if len(c.metrics) > 0 {
 
-		// collect all the metrics
-		c.m.Lock()
+func (c *Client) flush() error {
+	if len(c.metrics) == 0 {
+		return ErrNoMetrics
+	}
 
-		var metricstr string
-		output := ""
+	// collect all the metrics
+	c.m.Lock()
 
-		for k, v := range c.metrics {
-			metricstr = fmt.Sprintf("%s:%d|%s", k.name, v, k.unit)
-			output = output + metricstr + "\n"
-		}
+	var metricstr string
+	output := ""
 
-		log.Println("sending - ", output)
+	for k, v := range c.metrics {
+		metricstr = fmt.Sprintf("%s:%d|%s", k.name, v, k.unit)
+		output = output + metricstr + "\n"
+	}
 
-		b := bytes.NewBufferString(output)
-		// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
-		body := ioutil.NopCloser(b)
+	c.m.Lock()
 
-		// Send the string on to the server
-		resp, err := c.http.Post(c.hostURL, "text/plain", body)
+	log.Println("sending - ", output)
 
-		if err != nil {
-			log.Println("http client - ", err)
-		}
+	b := bytes.NewBufferString(output)
+	// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
+	body := ioutil.NopCloser(b)
 
-		if resp.StatusCode > 299 {
-			log.Println("status code above 200 received - ", resp.StatusCode)
-			// Could just drop the data here - not much point sending it on
-			// but we should probably tweak the interval
+	// Send the string on to the server
+	resp, err := c.http.Post(c.hostURL, "text/plain", body)
 
-		}
+	if err != nil {
+		log.Println("http client - ", err)
+		return err
+	}
 
-	} // length test
+	if resp.StatusCode > 299 {
+		log.Println("status code above 200 received - ", resp.StatusCode)
+		// Could just drop the data here - not much point sending it on
+		// but we should probably tweak the interval
+
+		return fmt.Errorf("Non-success HTTP Status Code (%d)", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // Listen starts the client listening for metrics on the chan

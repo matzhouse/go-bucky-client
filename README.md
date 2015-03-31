@@ -17,7 +17,10 @@ import (
 
 func main() {
 
-	bc, err := buckyclient.NewClient("http://localhost:8005/bucky/v1/send", 1)
+	bc, err := buckyclient.NewClient(
+	        "http://localhost:8005/bucky/v1/send", 
+	        1,
+	    )
 
 	if err != nil {
 		log.Fatal(err)
