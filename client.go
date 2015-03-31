@@ -94,8 +94,11 @@ func (c *Client) setLogger(logger *log.Logger) {
 
 func (c *Client) flush() error {
 	if len(c.metrics) == 0 {
+		log.Println("no metrics found")
 		return ErrNoMetrics
 	}
+
+	log.Println("flushing..")
 
 	// collect all the metrics
 	c.m.Lock()
@@ -108,7 +111,9 @@ func (c *Client) flush() error {
 		output = output + metricstr + "\n"
 	}
 
-	c.m.Lock()
+	c.Reset()
+
+	c.m.Unlock()
 
 	log.Println("sending - ", output)
 
@@ -135,6 +140,10 @@ func (c *Client) flush() error {
 	return nil
 }
 
+func (c *Client) Reset() {
+	c.metrics = make(map[Metric]int)
+}
+
 // Listen starts the client listening for metrics on the chan
 // The chan is returned from this func
 func (c *Client) sender() (err error) {
@@ -146,9 +155,6 @@ func (c *Client) sender() (err error) {
 		for {
 
 			select {
-			case <-time.After(c.interval):
-
-				c.flush()
 
 			case <-c.stop:
 				log.Println("Shutting down bucky client")
@@ -158,7 +164,10 @@ func (c *Client) sender() (err error) {
 				log.Println("Metrics flushed")
 
 				c.stopped <- true
-				break
+
+			case <-time.After(c.interval):
+
+				c.flush()
 			}
 
 		} // for
