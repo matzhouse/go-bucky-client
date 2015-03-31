@@ -25,8 +25,10 @@ func TestFlushWithMetrics(t *testing.T) {
 	server, client := testTools(200, "")
 	defer server.Close()
 
-	client.Send("test", "1", "c")
+	client.Send("test", 1, "c")
 	client.flush()
+
+	return
 }
 
 func TestFlushReturnsErrorOnInvalidHostname(t *testing.T) {
@@ -35,7 +37,7 @@ func TestFlushReturnsErrorOnInvalidHostname(t *testing.T) {
 		http:    &http.Client{},
 	}
 
-	client.Send("test", "1", "c")
+	client.Send("test", 1, "c")
 
 	flushErr := client.flush()
 	if flushErr == nil {
@@ -58,9 +60,11 @@ func testTools(code int, body string) (*httptest.Server, *Client) {
 	}
 
 	httpClient := &http.Client{Transport: transport}
+
 	client := &Client{
 		hostURL: "http://localhost:12345",
 		http:    httpClient,
+		metrics: make(map[Metric]int),
 	}
 
 	return server, client

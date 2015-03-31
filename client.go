@@ -52,9 +52,8 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		interval: intDur,
 		stop:     make(chan bool, 1),
 		stopped:  make(chan bool, 1),
+		metrics:  make(map[Metric]int),
 	}
-
-	cl.metrics = make(map[Metric]int)
 
 	// start the sender
 	cl.sender()
@@ -63,9 +62,16 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 
 }
 
+// Count returns nothing and allows a counter to be incremented by a value
+func (c *Client) Count(name string, value int) {
+
+	c.send(name, value, "c") // for a counter
+
+}
+
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
-func (c *Client) Send(name string, value int, unit string) {
+func (c *Client) send(name string, value int, unit string) {
 
 	// Protect c.Metrics!
 	c.m.Lock()
