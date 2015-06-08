@@ -37,6 +37,11 @@ var (
 // It takes an interval value in seconds
 func NewClient(host string, interval int) (cl *Client, err error) {
 
+	// We should never send more often than once per minute
+	if interval < 60 {
+		interval = 60
+	}
+
 	intSecond := fmt.Sprintf("%ds", interval)
 
 	intDur, err := time.ParseDuration(intSecond)
