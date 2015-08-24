@@ -74,6 +74,13 @@ func (c *Client) Count(name string, value int) {
 
 }
 
+// Timer returns nothing and allows a timer metric to be set
+func (c *Client) Timer(name string, value int) {
+
+	c.send(name, value, "ms") // timer, so count in milliseconds
+
+}
+
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
 func (c *Client) send(name string, value int, unit string) {
