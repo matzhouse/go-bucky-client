@@ -1,4 +1,4 @@
-// buckyclient can send metrics to a buckyserver over http
+// Package buckyclient can send metrics to a buckyserver over http
 // see https://github.com/HubSpot/BuckyServer for more information
 package buckyclient
 
@@ -22,16 +22,35 @@ type Client struct {
 	logger   *log.Logger   // logger
 	interval time.Duration // Interval in seconds between sending metrics to buckyserver
 
-	m       sync.Mutex     // mutex for protecting Metrics
-	metrics map[Metric]int // Holds the current set of metrics ready for sending at every interval
+	m       sync.Mutex       // mutex for protecting Metrics
+	metrics map[Metric]Value // Holds the current set of metrics ready for sending at every interval
 
 	stop    chan bool
 	stopped chan bool
 }
 
 var (
+	// ErrNoMetrics is returned when there are not metrics to flush
 	ErrNoMetrics = errors.New("No metrics to flush")
 )
+
+// Value holds the different types of values
+type Value struct {
+	Avg *Average
+	Sum *Sum
+}
+
+// Average holds average data for a metric
+type Average struct {
+	Count int
+	Total int
+	Avg   float32
+}
+
+// Sum holds sum data for a metric
+type Sum struct {
+	Value int
+}
 
 // NewClient returns a client that can send data to a bucky server
 // It takes an interval value in seconds
@@ -57,7 +76,7 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		interval: intDur,
 		stop:     make(chan bool, 1),
 		stopped:  make(chan bool, 1),
-		metrics:  make(map[Metric]int),
+		metrics:  make(map[Metric]Value),
 	}
 
 	// start the sender
@@ -70,20 +89,27 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 // Count returns nothing and allows a counter to be incremented by a value
 func (c *Client) Count(name string, value int) {
 
-	c.send(name, value, "c") // for a counter
+	c.send(name, value, "c", "sum") // for a counter
 
 }
 
 // Timer returns nothing and allows a timer metric to be set
 func (c *Client) Timer(name string, value int) {
 
-	c.send(name, value, "ms") // timer, so count in milliseconds
+	c.send(name, value, "ms", "sum") // timer, so count in milliseconds
+
+}
+
+// AverageTimer returns nothing and allows a timer metric to be set
+func (c *Client) AverageTimer(name string, value int) {
+
+	c.send(name, value, "ms", "sum") // timer, so count in milliseconds
 
 }
 
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
-func (c *Client) send(name string, value int, unit string) {
+func (c *Client) send(name string, value int, unit string, action string) {
 
 	// Protect c.Metrics!
 	c.m.Lock()
@@ -91,13 +117,65 @@ func (c *Client) send(name string, value int, unit string) {
 
 	key := Metric{name, unit}
 
-	c.metrics[key] = c.metrics[key] + value
+	switch {
+	case action == "sum":
+
+		if c.metrics[key].Avg != nil {
+			// if this is already a sum metric then we can't use it any more
+			c.logger.Printf("cannot use metric %s as an Average - it's already a sum", name)
+			return
+		}
+
+		if val, ok := c.metrics[key]; ok {
+			c.metrics[key].Sum.Value = val.Sum.Value + value
+		} else {
+
+			// New value needed
+			c.metrics[key] = Value{
+				Sum: &Sum{
+					Value: value,
+				},
+			}
+
+		}
+
+	case action == "avg":
+
+		if c.metrics[key].Sum != nil {
+			// if this is already a sum metric then we can't use it any more
+			c.logger.Printf("cannot use metric %s as an Sum - it's already a average", name)
+			return
+		}
+
+		if val, ok := c.metrics[key]; ok {
+			// Update the average values
+			c.metrics[key].Avg.Total = val.Avg.Total + value
+			c.metrics[key].Avg.Count++
+			c.metrics[key].Avg.Avg = float32(c.metrics[key].Avg.Total) / float32(c.metrics[key].Avg.Count)
+
+		} else {
+
+			// New value needed
+			c.metrics[key] = Value{
+				Avg: &Average{},
+			}
+
+			// Update the average values
+			c.metrics[key].Avg.Total = val.Avg.Total + value
+			c.metrics[key].Avg.Count++
+			c.metrics[key].Avg.Avg = float32(c.metrics[key].Avg.Total) / float32(c.metrics[key].Avg.Count)
+
+		}
+
+	default:
+		c.logger.Printf("unknown action type - %s", action)
+	}
 
 }
 
-// setLogger allows you to specify an external logger
+// SetLogger allows you to specify an external logger
 // otherwise it uses the Stderr
-func (c *Client) setLogger(logger *log.Logger) {
+func (c *Client) SetLogger(logger *log.Logger) {
 	c.logger = logger
 }
 
@@ -116,8 +194,19 @@ func (c *Client) flush() error {
 	output := ""
 
 	for k, v := range c.metrics {
-		metricstr = fmt.Sprintf("%s:%d|%s", k.name, v, k.unit)
-		output = output + metricstr + "\n"
+
+		if v.Avg != nil {
+
+			metricstr = fmt.Sprintf("%s:%f|%s", k.name, v.Avg.Avg, k.unit)
+			output = output + metricstr + "\n"
+
+		} else if v.Sum != nil {
+
+			metricstr = fmt.Sprintf("%s:%d|%s", k.name, v.Sum.Value, k.unit)
+			output = output + metricstr + "\n"
+
+		}
+
 	}
 
 	c.Reset()
@@ -146,8 +235,9 @@ func (c *Client) flush() error {
 	return nil
 }
 
+// Reset resets the client map to nil after data has been sent
 func (c *Client) Reset() {
-	c.metrics = make(map[Metric]int)
+	c.metrics = make(map[Metric]Value)
 }
 
 // Listen starts the client listening for metrics on the chan
@@ -184,6 +274,7 @@ func (c *Client) sender() (err error) {
 
 }
 
+// Stop nicely stops the client
 func (c *Client) Stop() {
 	log.Println("Stopping bucky client")
 	c.stop <- true
