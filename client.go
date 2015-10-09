@@ -44,7 +44,7 @@ type Value struct {
 type Average struct {
 	Count int
 	Total int
-	Avg   float32
+	Avg   int
 }
 
 // Sum holds sum data for a metric
@@ -103,7 +103,7 @@ func (c *Client) Timer(name string, value int) {
 // AverageTimer returns nothing and allows a timer metric to be set
 func (c *Client) AverageTimer(name string, value int) {
 
-	c.send(name, value, "ms", "sum") // timer, so count in milliseconds
+	c.send(name, value, "ms", "avg") // timer, so count in milliseconds
 
 }
 
@@ -143,15 +143,21 @@ func (c *Client) send(name string, value int, unit string, action string) {
 
 		if c.metrics[key].Sum != nil {
 			// if this is already a sum metric then we can't use it any more
-			c.logger.Printf("cannot use metric %s as an Sum - it's already a average", name)
+			c.logger.Printf("cannot use metric %s as an Avg - it's already a sum", name)
 			return
 		}
 
+		var avgResult float32
+		var newCount int
+
 		if val, ok := c.metrics[key]; ok {
 			// Update the average values
+			newCount = c.metrics[key].Avg.Count + 1
+			avgResult = (c.metrics[key].Avg.Avg*c.metrics[key].Avg.Count + value) / newCount
+
 			c.metrics[key].Avg.Total = val.Avg.Total + value
-			c.metrics[key].Avg.Count++
-			c.metrics[key].Avg.Avg = float32(c.metrics[key].Avg.Total) / float32(c.metrics[key].Avg.Count)
+			c.metrics[key].Avg.Count = newCount
+			c.metrics[key].Avg.Avg = avgResult
 
 		} else {
 
@@ -160,10 +166,13 @@ func (c *Client) send(name string, value int, unit string, action string) {
 				Avg: &Average{},
 			}
 
+			newCount = c.metrics[key].Avg.Count + 1
+			avgResult = (c.metrics[key].Avg.Avg*float32(c.metrics[key].Avg.Count) + float32(value)) / float32(newCount)
+
 			// Update the average values
-			c.metrics[key].Avg.Total = val.Avg.Total + value
-			c.metrics[key].Avg.Count++
-			c.metrics[key].Avg.Avg = float32(c.metrics[key].Avg.Total) / float32(c.metrics[key].Avg.Count)
+			c.metrics[key].Avg.Total = c.metrics[key].Avg.Total + value
+			c.metrics[key].Avg.Count = newCount
+			c.metrics[key].Avg.Avg = avgResult
 
 		}
 
