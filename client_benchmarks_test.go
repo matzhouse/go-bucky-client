@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-func BenchmarkReset(b *testing.B) {
-	b.ReportAllocs()
-
-	client := &Client{metrics: make(map[Metric]int)}
-
-	for i := 0; i < b.N; i++ {
-		client.Count("test", 1)
-		client.Reset()
-	}
-}
-
 func populateClient(c *Client, n int) {
 	for i := 0; i < n; i++ {
 		c.Count("test_"+strconv.Itoa(i), i)
@@ -26,9 +15,15 @@ func populateClient(c *Client, n int) {
 func BenchmarkFormatMetricsForFlush(b *testing.B) {
 	b.ReportAllocs()
 
-	client := &Client{metrics: make(map[Metric]int), bufferPool: newBufferPool()}
+	client := &Client{
+		metrics:    make(map[Metric]int),
+		bufferPool: newBufferPool(),
+		input:      make(chan MetricWithValue, 1000),
+	}
 
 	populateClient(client, 10)
+
+	client.flushInputChannel()
 
 	for i := 0; i < b.N; i++ {
 		buf := client.bufferPool.Get().(*bytes.Buffer)

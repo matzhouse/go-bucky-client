@@ -26,6 +26,8 @@ type Client struct {
 	m       sync.Mutex     // mutex for protecting Metrics
 	metrics map[Metric]int // Holds the current set of metrics ready for sending at every interval
 
+	input chan MetricWithValue
+
 	stop    chan bool
 	stopped chan bool
 
@@ -58,14 +60,18 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		http:       &http.Client{},
 		logger:     log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
 		interval:   intDur,
+		input:      make(chan MetricWithValue),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
-		metrics:    make(map[Metric]int),
+		metrics:    make(map[Metric]int, 1000),
 		bufferPool: newBufferPool(),
 	}
 
 	// start the sender
 	cl.sender()
+
+	// So we process the input channel
+	go cl.inputProcessor()
 
 	return cl, nil
 
@@ -97,13 +103,8 @@ func (c *Client) Timer(name string, value int) {
 // the bucky server - this is thread safe
 func (c *Client) send(name string, value int, unit string) {
 
-	// Protect c.Metrics!
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	key := Metric{name, unit}
-
-	c.metrics[key] = c.metrics[key] + value
+	// Send to channel so we never block
+	c.input <- MetricWithValue{name, value, unit}
 
 }
 
@@ -170,9 +171,36 @@ func (c *Client) flush() error {
 	return nil
 }
 
+func (c *Client) flushInputChannel() {
+	for {
+		select {
+		case metric := <-c.input:
+			c.handleMetricWithValue(metric)
+		default:
+			return
+		}
+	}
+}
+
 func (c *Client) Reset() {
 	for k := range c.metrics {
 		delete(c.metrics, k)
+	}
+}
+
+func (c *Client) handleMetricWithValue(metric MetricWithValue) {
+	// Protect c.Metrics!
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	key := Metric{metric.name, metric.unit}
+
+	c.metrics[key] = c.metrics[key] + metric.value
+}
+
+func (c *Client) inputProcessor() {
+	for metric := range c.input {
+		c.handleMetricWithValue(metric)
 	}
 }
 
@@ -190,6 +218,9 @@ func (c *Client) sender() (err error) {
 
 			case <-c.stop:
 				log.Println("Shutting down bucky client")
+
+				// Make sure we don't have things left on the channel that aren't in the metrics map
+				c.flushInputChannel()
 
 				log.Println("Flushing last remaining metrics because of shutdown")
 				c.flush()
@@ -223,4 +254,10 @@ func (c *Client) Stop() {
 type Metric struct {
 	name string
 	unit string
+}
+
+type MetricWithValue struct {
+	name  string
+	value int
+	unit  string
 }
