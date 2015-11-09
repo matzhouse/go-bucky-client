@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -27,6 +28,8 @@ type Client struct {
 
 	stop    chan bool
 	stopped chan bool
+
+	bufferPool *sync.Pool
 }
 
 var (
@@ -51,13 +54,14 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 	}
 
 	cl = &Client{
-		hostURL:  host,
-		http:     &http.Client{},
-		logger:   log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
-		interval: intDur,
-		stop:     make(chan bool, 1),
-		stopped:  make(chan bool, 1),
-		metrics:  make(map[Metric]int),
+		hostURL:    host,
+		http:       &http.Client{},
+		logger:     log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
+		interval:   intDur,
+		stop:       make(chan bool, 1),
+		stopped:    make(chan bool, 1),
+		metrics:    make(map[Metric]int),
+		bufferPool: newBufferPool(),
 	}
 
 	// start the sender
@@ -65,6 +69,14 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 
 	return cl, nil
 
+}
+
+func newBufferPool() *sync.Pool {
+	return &sync.Pool{
+		New: func() interface{} {
+			return new(bytes.Buffer)
+		},
+	}
 }
 
 // Count returns nothing and allows a counter to be incremented by a value
@@ -101,6 +113,20 @@ func (c *Client) setLogger(logger *log.Logger) {
 	c.logger = logger
 }
 
+func (c *Client) formatMetricsForFlush(buf *bytes.Buffer) {
+	for k, v := range c.metrics {
+		buf.WriteString(k.name)
+		buf.WriteString(":")
+
+		// I blame @bradfitz for this: http://yapcasia.org/2015/talk/show/6bde6c69-187a-11e5-aca1-525412004261
+		buf.Write(strconv.AppendInt([]byte(""), int64(v), 10))
+
+		buf.WriteString("|")
+		buf.WriteString(k.unit)
+		buf.WriteString("\n")
+	}
+}
+
 // flush actually sends the data. can be called after
 // a specific time interval, or when stopping the client
 
@@ -112,23 +138,21 @@ func (c *Client) flush() error {
 	// collect all the metrics
 	c.m.Lock()
 
-	var metricstr string
-	output := ""
+	buf := c.bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
 
-	for k, v := range c.metrics {
-		metricstr = fmt.Sprintf("%s:%d|%s", k.name, v, k.unit)
-		output = output + metricstr + "\n"
-	}
+	c.formatMetricsForFlush(buf)
 
 	c.Reset()
 	c.m.Unlock()
 
-	b := bytes.NewBufferString(output)
 	// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
-	body := ioutil.NopCloser(b)
+	body := ioutil.NopCloser(buf)
 
 	// Send the string on to the server
 	resp, err := c.http.Post(c.hostURL, "text/plain", body)
+
+	c.bufferPool.Put(buf)
 
 	if err != nil {
 		log.Println("http client - ", err)
@@ -147,7 +171,9 @@ func (c *Client) flush() error {
 }
 
 func (c *Client) Reset() {
-	c.metrics = make(map[Metric]int)
+	for k := range c.metrics {
+		delete(c.metrics, k)
+	}
 }
 
 // Listen starts the client listening for metrics on the chan
