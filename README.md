@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/matzhouse/go-bucky-client.svg)](https://travis-ci.org/matzhouse/go-bucky-client)
+
 # go-bucky-client
 simple client to collect and send stuff to a bucky server
 
