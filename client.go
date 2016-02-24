@@ -1,4 +1,4 @@
-// buckyclient can send metrics to a buckyserver over http
+// Package buckyclient can send metrics to a buckyserver over http
 // see https://github.com/HubSpot/BuckyServer for more information
 package buckyclient
 
@@ -35,6 +35,7 @@ type Client struct {
 }
 
 var (
+	// ErrNoMetrics is returned when there are not metrics to flush
 	ErrNoMetrics = errors.New("No metrics to flush")
 )
 
@@ -58,7 +59,7 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 	cl = &Client{
 		hostURL:    host,
 		http:       &http.Client{},
-		logger:     log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
+		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   intDur,
 		input:      make(chan MetricWithValue),
 		stop:       make(chan bool, 1),
@@ -108,9 +109,9 @@ func (c *Client) send(name string, value int, unit string) {
 
 }
 
-// setLogger allows you to specify an external logger
+// SetLogger allows you to specify an external logger
 // otherwise it uses the Stderr
-func (c *Client) setLogger(logger *log.Logger) {
+func (c *Client) SetLogger(logger *log.Logger) {
 	c.logger = logger
 }
 
@@ -182,6 +183,7 @@ func (c *Client) flushInputChannel() {
 	}
 }
 
+// Reset resets the client map to nil after data has been sent
 func (c *Client) Reset() {
 	for k := range c.metrics {
 		delete(c.metrics, k)
@@ -241,6 +243,7 @@ func (c *Client) sender() (err error) {
 
 }
 
+// Stop nicely stops the client
 func (c *Client) Stop() {
 	log.Println("Stopping bucky client")
 	c.stop <- true
