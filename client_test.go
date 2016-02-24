@@ -4,9 +4,11 @@ import (
 	// "errors"
 	"bytes"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"testing"
 )
 
@@ -40,6 +42,7 @@ func TestFlushReturnsErrorOnInvalidHostname(t *testing.T) {
 		metrics:    make(map[Metric]int),
 		bufferPool: newBufferPool(),
 		input:      make(chan MetricWithValue, 1000),
+		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 	}
 
 	client.Count("test", 1)

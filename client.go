@@ -157,12 +157,12 @@ func (c *Client) flush() error {
 	c.bufferPool.Put(buf)
 
 	if err != nil {
-		log.Println("http client - ", err)
+		c.logger.Println("http client - ", err)
 		return err
 	}
 
 	if resp.StatusCode > 299 {
-		log.Println("status code above 200 received - ", resp.StatusCode)
+		c.logger.Println("status code above 200 received - ", resp.StatusCode)
 		// Could just drop the data here - not much point sending it on
 		// but we should probably tweak the interval
 
@@ -219,14 +219,14 @@ func (c *Client) sender() (err error) {
 			select {
 
 			case <-c.stop:
-				log.Println("Shutting down bucky client")
+				c.logger.Println("Shutting down bucky client")
 
 				// Make sure we don't have things left on the channel that aren't in the metrics map
 				c.flushInputChannel()
 
-				log.Println("Flushing last remaining metrics because of shutdown")
+				c.logger.Println("Flushing last remaining metrics because of shutdown")
 				c.flush()
-				log.Println("Metrics flushed")
+				c.logger.Println("Metrics flushed")
 
 				c.stopped <- true
 
@@ -245,12 +245,12 @@ func (c *Client) sender() (err error) {
 
 // Stop nicely stops the client
 func (c *Client) Stop() {
-	log.Println("Stopping bucky client")
+	c.logger.Println("Stopping bucky client")
 	c.stop <- true
 
 	// Wait until it actually stops
 	<-c.stopped
-	log.Println("Client stopped")
+	c.logger.Println("Client stopped")
 }
 
 // Metric represents a metric to be sent over the wire
