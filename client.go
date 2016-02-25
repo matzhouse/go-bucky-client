@@ -88,9 +88,7 @@ func newBufferPool() *sync.Pool {
 
 // Count returns nothing and allows a counter to be incremented by a value
 func (c *Client) Count(name string, value int) {
-
 	c.send(name, value, "c", "sum") // for a counter
-
 }
 
 // Timer returns nothing and allows a timer metric to be set
@@ -174,9 +172,8 @@ func (c *Client) formatMetricsForFlush(buf *bytes.Buffer) {
 	}
 }
 
-// flush actually sends the data. can be called after
+// flush actually sends the data. It can be called after
 // a specific time interval, or when stopping the client
-
 func (c *Client) flush() error {
 	if len(c.metrics) == 0 {
 		return ErrNoMetrics
@@ -193,7 +190,8 @@ func (c *Client) flush() error {
 	c.Reset()
 	c.m.Unlock()
 
-	// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
+	// The request will only accept a ReadCloser for the body - this method
+	// fakes it by adding a nop close method.
 	body := ioutil.NopCloser(buf)
 
 	// Send the string on to the server
