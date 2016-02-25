@@ -39,7 +39,7 @@ func TestFlushReturnsErrorOnInvalidHostname(t *testing.T) {
 	client := &Client{
 		hostURL:    "localhost/url",
 		http:       &http.Client{},
-		metrics:    make(map[Metric]int),
+		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
 		input:      make(chan MetricWithValue, 1000),
 		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
@@ -56,7 +56,7 @@ func TestFlushReturnsErrorOnInvalidHostname(t *testing.T) {
 }
 
 func TestFormattedOutput(t *testing.T) {
-	client := &Client{metrics: make(map[Metric]int), input: make(chan MetricWithValue, 1000)}
+	client := &Client{metrics: make(map[Metric]Value), input: make(chan MetricWithValue, 1000)}
 
 	client.Count("test", 1)
 	client.Timer("timer", 10)
@@ -77,7 +77,7 @@ func TestFormattedOutput(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	client := &Client{metrics: make(map[Metric]int), input: make(chan MetricWithValue, 1000)}
+	client := &Client{metrics: make(map[Metric]Value), input: make(chan MetricWithValue, 1000)}
 
 	client.Count("test", 1)
 	client.Count("test2", 1)
@@ -118,7 +118,7 @@ func testTools(code int, body string) (*httptest.Server, *Client) {
 	client := &Client{
 		hostURL:    "http://localhost:12345",
 		http:       httpClient,
-		metrics:    make(map[Metric]int),
+		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
 		input:      make(chan MetricWithValue, 1000),
 	}

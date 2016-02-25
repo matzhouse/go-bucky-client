@@ -16,7 +16,7 @@ func BenchmarkFormatMetricsForFlush(b *testing.B) {
 	b.ReportAllocs()
 
 	client := &Client{
-		metrics:    make(map[Metric]int),
+		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
 		input:      make(chan MetricWithValue, 1000),
 	}
