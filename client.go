@@ -1,4 +1,4 @@
-// buckyclient can send metrics to a buckyserver over http
+// Package buckyclient can send metrics to a buckyserver over http
 // see https://github.com/HubSpot/BuckyServer for more information
 package buckyclient
 
@@ -23,8 +23,8 @@ type Client struct {
 	logger   *log.Logger   // logger
 	interval time.Duration // Interval in seconds between sending metrics to buckyserver
 
-	m       sync.Mutex     // mutex for protecting Metrics
-	metrics map[Metric]int // Holds the current set of metrics ready for sending at every interval
+	m       sync.Mutex       // mutex for protecting Metrics
+	metrics map[Metric]Value // Holds the current set of metrics ready for sending at every interval
 
 	input chan MetricWithValue
 
@@ -35,6 +35,7 @@ type Client struct {
 }
 
 var (
+	// ErrNoMetrics is returned when there are not metrics to flush
 	ErrNoMetrics = errors.New("No metrics to flush")
 )
 
@@ -58,12 +59,12 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 	cl = &Client{
 		hostURL:    host,
 		http:       &http.Client{},
-		logger:     log.New(os.Stderr, "", log.LstdFlags), // Stderr logging
+		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   intDur,
 		input:      make(chan MetricWithValue),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
-		metrics:    make(map[Metric]int, 1000),
+		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
 	}
 
@@ -87,50 +88,92 @@ func newBufferPool() *sync.Pool {
 
 // Count returns nothing and allows a counter to be incremented by a value
 func (c *Client) Count(name string, value int) {
-
-	c.send(name, value, "c") // for a counter
-
+	c.send(name, value, "c", "sum") // for a counter
 }
 
 // Timer returns nothing and allows a timer metric to be set
 func (c *Client) Timer(name string, value int) {
+	c.send(name, value, "ms", "sum") // timer, so count in milliseconds
+}
 
-	c.send(name, value, "ms") // timer, so count in milliseconds
-
+// AverageTimer returns nothing and allows a timer metric to be set
+func (c *Client) AverageTimer(name string, value int) {
+	c.send(name, value, "ms", "avg") // timer, so count in milliseconds
 }
 
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
-func (c *Client) send(name string, value int, unit string) {
-
+func (c *Client) send(name string, value int, unit string, action string) {
 	// Send to channel so we never block
-	c.input <- MetricWithValue{name, value, unit}
+	m := Metric{
+		name: name,
+		unit: unit,
+	}
 
+	v := Value{}
+
+	switch action {
+	case "sum":
+		v.Sum = &Sum{
+			Value: value,
+		}
+	case "avg":
+		v.Avg = &Average{}
+
+		var avgResult int
+		var newCount int
+
+		if val, ok := c.metrics[m]; ok {
+			// Update the average values
+			newCount = c.metrics[m].Avg.Count + 1
+			avgResult = (c.metrics[m].Avg.Avg*c.metrics[m].Avg.Count + value) / newCount
+
+			c.metrics[m].Avg.Total = val.Avg.Total + value
+			c.metrics[m].Avg.Count = newCount
+			c.metrics[m].Avg.Avg = avgResult
+
+		} else {
+			newCount = v.Avg.Count + 1
+			avgResult = (v.Avg.Avg*v.Avg.Count + value) / newCount
+
+			// Update the average values
+			v.Avg.Total = v.Avg.Total + value
+			v.Avg.Count = newCount
+			v.Avg.Avg = avgResult
+
+			c.metrics[m] = v
+		}
+	}
+
+	c.input <- MetricWithValue{m, v}
 }
 
-// setLogger allows you to specify an external logger
+// SetLogger allows you to specify an external logger
 // otherwise it uses the Stderr
-func (c *Client) setLogger(logger *log.Logger) {
+func (c *Client) SetLogger(logger *log.Logger) {
 	c.logger = logger
 }
 
 func (c *Client) formatMetricsForFlush(buf *bytes.Buffer) {
 	for k, v := range c.metrics {
 		buf.WriteString(k.name)
-		buf.WriteString(":")
+		buf.WriteRune(':')
 
 		// I blame @bradfitz for this: http://yapcasia.org/2015/talk/show/6bde6c69-187a-11e5-aca1-525412004261
-		buf.Write(strconv.AppendInt([]byte(""), int64(v), 10))
+		if v.Avg != nil {
+			buf.Write(strconv.AppendInt([]byte(""), int64(v.Avg.Avg), 10))
+		} else if v.Sum != nil {
+			buf.Write(strconv.AppendInt([]byte(""), int64(v.Sum.Value), 10))
+		}
 
-		buf.WriteString("|")
+		buf.WriteRune('|')
 		buf.WriteString(k.unit)
-		buf.WriteString("\n")
+		buf.WriteRune('\n')
 	}
 }
 
-// flush actually sends the data. can be called after
+// flush actually sends the data. It can be called after
 // a specific time interval, or when stopping the client
-
 func (c *Client) flush() error {
 	if len(c.metrics) == 0 {
 		return ErrNoMetrics
@@ -147,7 +190,8 @@ func (c *Client) flush() error {
 	c.Reset()
 	c.m.Unlock()
 
-	// The request will only accept a ReadCloser for the body - this method fakes it by adding a nop close method.
+	// The request will only accept a ReadCloser for the body - this method
+	// fakes it by adding a nop close method.
 	body := ioutil.NopCloser(buf)
 
 	// Send the string on to the server
@@ -156,12 +200,12 @@ func (c *Client) flush() error {
 	c.bufferPool.Put(buf)
 
 	if err != nil {
-		log.Println("http client - ", err)
+		c.logger.Println("http client - ", err)
 		return err
 	}
 
 	if resp.StatusCode > 299 {
-		log.Println("status code above 200 received - ", resp.StatusCode)
+		c.logger.Println("status code above 200 received - ", resp.StatusCode)
 		// Could just drop the data here - not much point sending it on
 		// but we should probably tweak the interval
 
@@ -182,6 +226,7 @@ func (c *Client) flushInputChannel() {
 	}
 }
 
+// Reset resets the client map to nil after data has been sent
 func (c *Client) Reset() {
 	for k := range c.metrics {
 		delete(c.metrics, k)
@@ -193,9 +238,7 @@ func (c *Client) handleMetricWithValue(metric MetricWithValue) {
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	key := Metric{metric.name, metric.unit}
-
-	c.metrics[key] = c.metrics[key] + metric.value
+	c.metrics[metric.Metric] = metric.Value
 }
 
 func (c *Client) inputProcessor() {
@@ -217,14 +260,14 @@ func (c *Client) sender() (err error) {
 			select {
 
 			case <-c.stop:
-				log.Println("Shutting down bucky client")
+				c.logger.Println("Shutting down bucky client")
 
 				// Make sure we don't have things left on the channel that aren't in the metrics map
 				c.flushInputChannel()
 
-				log.Println("Flushing last remaining metrics because of shutdown")
+				c.logger.Println("Flushing last remaining metrics because of shutdown")
 				c.flush()
-				log.Println("Metrics flushed")
+				c.logger.Println("Metrics flushed")
 
 				c.stopped <- true
 
@@ -241,13 +284,14 @@ func (c *Client) sender() (err error) {
 
 }
 
+// Stop nicely stops the client
 func (c *Client) Stop() {
-	log.Println("Stopping bucky client")
+	c.logger.Println("Stopping bucky client")
 	c.stop <- true
 
 	// Wait until it actually stops
 	<-c.stopped
-	log.Println("Client stopped")
+	c.logger.Println("Client stopped")
 }
 
 // Metric represents a metric to be sent over the wire
@@ -257,7 +301,24 @@ type Metric struct {
 }
 
 type MetricWithValue struct {
-	name  string
-	value int
-	unit  string
+	Metric
+	Value
+}
+
+// Value holds the different types of values
+type Value struct {
+	Avg *Average
+	Sum *Sum
+}
+
+// Average holds average data for a metric
+type Average struct {
+	Count int
+	Total int
+	Avg   int
+}
+
+// Sum holds sum data for a metric
+type Sum struct {
+	Value int
 }
