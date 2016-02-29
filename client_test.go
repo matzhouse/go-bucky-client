@@ -77,6 +77,8 @@ func TestClient_Client_Count(t *testing.T) {
 
 	cl.Count(name, value)
 
+	time.Sleep(time.Millisecond * 20) // Give the goroutine a chance to run
+
 	assert.Equal(t, len(cl.input), 1)
 
 	metric := <-cl.input
@@ -107,6 +109,8 @@ func TestClient_Client_Timer(t *testing.T) {
 	}()
 
 	cl.Timer(name, value)
+
+	time.Sleep(time.Millisecond * 20) // Give the goroutine a chance to run
 
 	assert.Equal(t, len(cl.input), 1)
 
@@ -139,9 +143,13 @@ func TestClient_Client_AverageTimer(t *testing.T) {
 
 	cl.AverageTimer(name, value)
 
+	time.Sleep(time.Millisecond * 20) // Give the goroutine a chance to run
+
 	assert.Equal(t, len(cl.metrics), 1)
 
 	cl.AverageTimer(name, 3)
+
+	time.Sleep(time.Millisecond * 20) // Give the goroutine a chance to run
 
 	assert.Equal(t, len(cl.metrics), 1)
 

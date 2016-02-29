@@ -88,23 +88,26 @@ func newBufferPool() *sync.Pool {
 
 // Count returns nothing and allows a counter to be incremented by a value
 func (c *Client) Count(name string, value int) {
-	c.send(name, value, "c", "sum") // for a counter
+	go c.send(name, value, "c", "sum") // for a counter
 }
 
 // Timer returns nothing and allows a timer metric to be set
 func (c *Client) Timer(name string, value int) {
-	c.send(name, value, "ms", "sum") // timer, so count in milliseconds
+	go c.send(name, value, "ms", "sum") // timer, so count in milliseconds
 }
 
 // AverageTimer returns nothing and allows a timer metric to be set
 func (c *Client) AverageTimer(name string, value int) {
-	c.send(name, value, "ms", "avg") // timer, so count in milliseconds
+	go c.send(name, value, "ms", "avg") // timer, so count in milliseconds
 }
 
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
 func (c *Client) send(name string, value int, unit string, action string) {
-	// Send to channel so we never block
+	// Protect the metrics
+	c.m.Lock()
+	defer c.m.Unlock()
+
 	m := Metric{
 		name: name,
 		unit: unit,
@@ -175,12 +178,13 @@ func (c *Client) formatMetricsForFlush(buf *bytes.Buffer) {
 // flush actually sends the data. It can be called after
 // a specific time interval, or when stopping the client
 func (c *Client) flush() error {
-	if len(c.metrics) == 0 {
-		return ErrNoMetrics
-	}
-
 	// collect all the metrics
 	c.m.Lock()
+
+	if len(c.metrics) == 0 {
+		c.m.Unlock() // Remember to unlock as we don't unlock when the function ends
+		return ErrNoMetrics
+	}
 
 	buf := c.bufferPool.Get().(*bytes.Buffer)
 	buf.Reset()
