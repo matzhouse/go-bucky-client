@@ -26,7 +26,7 @@ type Client struct {
 	m       sync.Mutex       // mutex for protecting Metrics
 	metrics map[Metric]Value // Holds the current set of metrics ready for sending at every interval
 
-	input chan MetricWithValue
+	input chan MetricWithAmount
 
 	stop    chan bool
 	stopped chan bool
@@ -61,7 +61,7 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		http:       &http.Client{},
 		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   intDur,
-		input:      make(chan MetricWithValue),
+		input:      make(chan MetricWithAmount),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
@@ -88,64 +88,30 @@ func newBufferPool() *sync.Pool {
 
 // Count returns nothing and allows a counter to be incremented by a value
 func (c *Client) Count(name string, value int) {
-	c.send(name, value, "c", "sum") // for a counter
+	go c.send(name, value, "c", "sum") // for a counter
 }
 
 // Timer returns nothing and allows a timer metric to be set
 func (c *Client) Timer(name string, value int) {
-	c.send(name, value, "ms", "sum") // timer, so count in milliseconds
+	go c.send(name, value, "ms", "sum") // timer, so count in milliseconds
 }
 
 // AverageTimer returns nothing and allows a timer metric to be set
 func (c *Client) AverageTimer(name string, value int) {
-	c.send(name, value, "ms", "avg") // timer, so count in milliseconds
+	go c.send(name, value, "ms", "avg") // timer, so count in milliseconds
 }
 
 // Send is used to record a metric and have it send to
 // the bucky server - this is thread safe
 func (c *Client) send(name string, value int, unit string, action string) {
-	// Send to channel so we never block
 	m := Metric{
 		name: name,
 		unit: unit,
 	}
 
-	v := Value{}
+	a := Amount{Value: value}
 
-	switch action {
-	case "sum":
-		v.Sum = &Sum{
-			Value: value,
-		}
-	case "avg":
-		v.Avg = &Average{}
-
-		var avgResult int
-		var newCount int
-
-		if val, ok := c.metrics[m]; ok {
-			// Update the average values
-			newCount = c.metrics[m].Avg.Count + 1
-			avgResult = (c.metrics[m].Avg.Avg*c.metrics[m].Avg.Count + value) / newCount
-
-			c.metrics[m].Avg.Total = val.Avg.Total + value
-			c.metrics[m].Avg.Count = newCount
-			c.metrics[m].Avg.Avg = avgResult
-
-		} else {
-			newCount = v.Avg.Count + 1
-			avgResult = (v.Avg.Avg*v.Avg.Count + value) / newCount
-
-			// Update the average values
-			v.Avg.Total = v.Avg.Total + value
-			v.Avg.Count = newCount
-			v.Avg.Avg = avgResult
-
-			c.metrics[m] = v
-		}
-	}
-
-	c.input <- MetricWithValue{m, v}
+	c.input <- MetricWithAmount{m, a, action}
 }
 
 // SetLogger allows you to specify an external logger
@@ -175,12 +141,13 @@ func (c *Client) formatMetricsForFlush(buf *bytes.Buffer) {
 // flush actually sends the data. It can be called after
 // a specific time interval, or when stopping the client
 func (c *Client) flush() error {
-	if len(c.metrics) == 0 {
-		return ErrNoMetrics
-	}
-
 	// collect all the metrics
 	c.m.Lock()
+
+	if len(c.metrics) == 0 {
+		c.m.Unlock() // Remember to unlock as we don't unlock when the function ends
+		return ErrNoMetrics
+	}
 
 	buf := c.bufferPool.Get().(*bytes.Buffer)
 	buf.Reset()
@@ -233,12 +200,44 @@ func (c *Client) Reset() {
 	}
 }
 
-func (c *Client) handleMetricWithValue(metric MetricWithValue) {
+func (c *Client) handleMetricWithValue(metric MetricWithAmount) {
 	// Protect c.Metrics!
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	c.metrics[metric.Metric] = metric.Value
+	v := Value{}
+
+	switch metric.Action {
+	case "sum":
+		v.Sum = &Sum{
+			Value: metric.Amount.Value,
+		}
+		c.metrics[metric.Metric] = v
+	case "avg":
+		var avgResult int
+		var newCount int
+
+		if _, ok := c.metrics[metric.Metric]; ok {
+			newCount = c.metrics[metric.Metric].Avg.Count + 1
+			avgResult = (c.metrics[metric.Metric].Avg.Avg*c.metrics[metric.Metric].Avg.Count + metric.Amount.Value) / newCount
+
+			c.metrics[metric.Metric].Avg.Total += metric.Amount.Value
+			c.metrics[metric.Metric].Avg.Count = newCount
+			c.metrics[metric.Metric].Avg.Avg = avgResult
+		} else {
+			v.Avg = &Average{}
+
+			newCount = v.Avg.Count + 1
+			avgResult = (v.Avg.Avg*v.Avg.Count + metric.Amount.Value) / newCount
+
+			v.Avg.Total += metric.Amount.Value
+			v.Avg.Count = newCount
+			v.Avg.Avg = avgResult
+
+			c.metrics[metric.Metric] = v
+		}
+	}
+
 }
 
 func (c *Client) inputProcessor() {
@@ -300,15 +299,20 @@ type Metric struct {
 	unit string
 }
 
-type MetricWithValue struct {
+type MetricWithAmount struct {
 	Metric
-	Value
+	Amount
+	Action string
 }
 
 // Value holds the different types of values
 type Value struct {
 	Avg *Average
 	Sum *Sum
+}
+
+type Amount struct {
+	Value int
 }
 
 // Average holds average data for a metric
