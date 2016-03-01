@@ -42,6 +42,9 @@ func main() {
 	bc.Count("test.metric.2", 4) // test counter
 	bc.Count("test.metric", 3)   // test counter
 
+	bc.AverageTimer("avg.metric", 3)
+	bc.AverageTimer("avg.metric", 5)
+
 	fmt.Println("finished sending")
 
 	time.Sleep(10 * time.Second)

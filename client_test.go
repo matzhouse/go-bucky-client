@@ -63,7 +63,7 @@ func TestClient_Client_Count(t *testing.T) {
 		http:       &http.Client{},
 		logger:     log.New(ioutil.Discard, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   3 * time.Second,
-		input:      make(chan MetricWithValue, 10),
+		input:      make(chan MetricWithAmount, 10),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
@@ -85,7 +85,7 @@ func TestClient_Client_Count(t *testing.T) {
 
 	assert.Equal(t, metric.name, name)
 	assert.Equal(t, metric.unit, "c")
-	assert.Equal(t, metric.Value.Sum.Value, value)
+	assert.Equal(t, metric.Amount.Value, value)
 }
 
 func TestClient_Client_Timer(t *testing.T) {
@@ -96,7 +96,7 @@ func TestClient_Client_Timer(t *testing.T) {
 		http:       &http.Client{},
 		logger:     log.New(ioutil.Discard, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   3 * time.Second,
-		input:      make(chan MetricWithValue, 10),
+		input:      make(chan MetricWithAmount, 10),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
@@ -118,7 +118,7 @@ func TestClient_Client_Timer(t *testing.T) {
 
 	assert.Equal(t, metric.name, name)
 	assert.Equal(t, metric.unit, "ms")
-	assert.Equal(t, metric.Value.Sum.Value, value)
+	assert.Equal(t, metric.Amount.Value, value)
 }
 
 func TestClient_Client_AverageTimer(t *testing.T) {
@@ -129,7 +129,7 @@ func TestClient_Client_AverageTimer(t *testing.T) {
 		http:       &http.Client{},
 		logger:     log.New(ioutil.Discard, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   3 * time.Second,
-		input:      make(chan MetricWithValue, 10),
+		input:      make(chan MetricWithAmount, 10),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
@@ -143,21 +143,15 @@ func TestClient_Client_AverageTimer(t *testing.T) {
 
 	cl.AverageTimer(name, value)
 
-	time.Sleep(time.Millisecond * 20) // Give the goroutine a chance to run
-
-	assert.Equal(t, len(cl.metrics), 1)
-
 	cl.AverageTimer(name, 3)
 
-	time.Sleep(time.Millisecond * 20) // Give the goroutine a chance to run
-
-	assert.Equal(t, len(cl.metrics), 1)
+	time.Sleep(time.Millisecond * 20)
 
 	metric := <-cl.input
 
 	assert.Equal(t, metric.name, name)
 	assert.Equal(t, metric.unit, "ms")
-	assert.Equal(t, metric.Value.Avg.Avg, 2)
+	assert.Equal(t, metric.Amount.Value, 3)
 }
 
 func TestClient_Client_SetLogger(t *testing.T) {
@@ -308,10 +302,10 @@ func TestClient_Client_flush_NonSuccessfulStatusCode(t *testing.T) { // Non 2XX
 func TestClient_Client_flushInputChannel(t *testing.T) {
 	cl := &Client{
 		metrics: make(map[Metric]Value),
-		input:   make(chan MetricWithValue, 1),
+		input:   make(chan MetricWithAmount, 1),
 	}
 
-	cl.input <- MetricWithValue{Metric{name: "myapp.test"}, Value{}}
+	cl.input <- MetricWithAmount{Metric{name: "myapp.test"}, Amount{}, "sum"}
 
 	cl.flushInputChannel()
 
@@ -333,31 +327,54 @@ func TestClient_Client_Reset(t *testing.T) {
 	assert.Equal(t, len(cl.metrics), 0)
 }
 
-func TestClient_Client_handleMetricWithValue(t *testing.T) {
+func TestClient_Client_handleMetricWithValue_Average(t *testing.T) {
 	cl := &Client{
 		metrics: make(map[Metric]Value),
 	}
 
 	metric := Metric{name: "m.et.ric"}
-	value := Value{}
+	amount := Amount{Value: 3}
 
-	metricValue := MetricWithValue{metric, value}
+	metricValue := MetricWithAmount{metric, amount, "avg"}
 
 	cl.handleMetricWithValue(metricValue)
+
 	cl.handleMetricWithValue(metricValue)
 
 	assert.Equal(t, len(cl.metrics), 1)
-	assert.Equal(t, cl.metrics[metric], value)
+	assert.Equal(t, cl.metrics[metric].Avg, &Average{
+		Count: 2,
+		Total: 6,
+		Avg:   3,
+	})
+	assert.Nil(t, cl.metrics[metric].Sum)
+}
+
+func TestClient_Client_handleMetricWithValue_Sum(t *testing.T) {
+	cl := &Client{
+		metrics: make(map[Metric]Value),
+	}
+
+	metric := Metric{name: "m.et.ric"}
+	amount := Amount{Value: 3}
+
+	metricValue := MetricWithAmount{metric, amount, "sum"}
+
+	cl.handleMetricWithValue(metricValue)
+
+	assert.Equal(t, len(cl.metrics), 1)
+	assert.Equal(t, cl.metrics[metric].Sum, &Sum{Value: 3})
+	assert.Nil(t, cl.metrics[metric].Avg)
 }
 
 func TestClient_Client_inputProcessor(t *testing.T) {
 	cl := &Client{
 		metrics: make(map[Metric]Value),
-		input:   make(chan MetricWithValue, 5),
+		input:   make(chan MetricWithAmount, 5),
 	}
 
 	for i := 0; i < 5; i++ {
-		cl.input <- MetricWithValue{Metric{name: fmt.Sprintf("%d", i)}, Value{}}
+		cl.input <- MetricWithAmount{Metric{name: fmt.Sprintf("%d", i)}, Amount{}, "sum"}
 	}
 	close(cl.input) // Close or this will hang!
 
@@ -371,7 +388,7 @@ func TestClient_Client_sender(t *testing.T) {
 		http:       &http.Client{},
 		logger:     log.New(ioutil.Discard, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   10 * time.Millisecond,
-		input:      make(chan MetricWithValue, 10),
+		input:      make(chan MetricWithAmount, 10),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
