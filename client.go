@@ -209,10 +209,18 @@ func (c *Client) handleMetricWithValue(metric MetricWithAmount) {
 
 	switch metric.Action {
 	case "sum":
-		v.Sum = &Sum{
-			Value: metric.Amount.Value,
+		
+		// Check if we have the metric already
+		if _, ok := c.metrics[metric.Metric]; ok {
+			c.metrics[metric.Metric].Sum.Value = metric.Amount.Value + c.metrics[metric.Metric].Sum.Value
+		} else {
+			v.Sum = &Sum{
+				Value: metric.Amount.Value,
+			}
+
+			c.metrics[metric.Metric] = v
 		}
-		c.metrics[metric.Metric] = v
+		
 	case "avg":
 		var avgResult int
 		var newCount int
