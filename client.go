@@ -32,6 +32,8 @@ type Client struct {
 	stopped chan bool
 
 	bufferPool *sync.Pool
+
+	waitGroup *sync.WaitGroup
 }
 
 var (
@@ -61,11 +63,12 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		http:       &http.Client{},
 		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   intDur,
-		input:      make(chan MetricWithAmount),
+		input:      make(chan MetricWithAmount, 100),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
+		waitGroup:  &sync.WaitGroup{},
 	}
 
 	// start the sender
@@ -88,16 +91,19 @@ func newBufferPool() *sync.Pool {
 
 // Count returns nothing and allows a counter to be incremented by a value
 func (c *Client) Count(name string, value int) {
+	c.waitGroup.Add(1)
 	go c.send(name, value, "c", "sum") // for a counter
 }
 
 // Timer returns nothing and allows a timer metric to be set
 func (c *Client) Timer(name string, value int) {
+	c.waitGroup.Add(1)
 	go c.send(name, value, "ms", "sum") // timer, so count in milliseconds
 }
 
 // AverageTimer returns nothing and allows a timer metric to be set
 func (c *Client) AverageTimer(name string, value int) {
+	c.waitGroup.Add(1)
 	go c.send(name, value, "ms", "avg") // timer, so count in milliseconds
 }
 
@@ -112,6 +118,8 @@ func (c *Client) send(name string, value int, unit string, action string) {
 	a := Amount{Value: value}
 
 	c.input <- MetricWithAmount{m, a, action}
+
+	c.waitGroup.Done()
 }
 
 // SetLogger allows you to specify an external logger
@@ -209,7 +217,7 @@ func (c *Client) handleMetricWithValue(metric MetricWithAmount) {
 
 	switch metric.Action {
 	case "sum":
-		
+
 		// Check if we have the metric already
 		if _, ok := c.metrics[metric.Metric]; ok {
 			c.metrics[metric.Metric].Sum.Value = metric.Amount.Value + c.metrics[metric.Metric].Sum.Value
@@ -220,7 +228,7 @@ func (c *Client) handleMetricWithValue(metric MetricWithAmount) {
 
 			c.metrics[metric.Metric] = v
 		}
-		
+
 	case "avg":
 		var avgResult int
 		var newCount int
@@ -294,6 +302,8 @@ func (c *Client) sender() (err error) {
 // Stop nicely stops the client
 func (c *Client) Stop() {
 	c.logger.Println("Stopping bucky client")
+
+	c.waitGroup.Wait()
 	c.stop <- true
 
 	// Wait until it actually stops
