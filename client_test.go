@@ -36,7 +36,7 @@ func mockBuckyServer(code int) *httptest.Server {
 }
 
 func TestClient_Client_NewClient(t *testing.T) {
-	cl, err := NewClient("", 20)
+	cl, err := NewClient("", 20, 0)
 	defer func() {
 		close(cl.stop)
 		close(cl.stopped)
@@ -48,7 +48,7 @@ func TestClient_Client_NewClient(t *testing.T) {
 }
 
 func TestClient_Client_NewClient_Error(t *testing.T) {
-	cl, err := NewClient("", 1<<48) // Cause an integer overflow in time.ParseDuration
+	cl, err := NewClient("", 1<<48, 0) // Cause an integer overflow in time.ParseDuration
 
 	assert.Error(t, err)
 	assert.Nil(t, cl)

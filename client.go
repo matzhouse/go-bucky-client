@@ -42,8 +42,9 @@ var (
 )
 
 // NewClient returns a client that can send data to a bucky server
-// It takes an interval value in seconds
-func NewClient(host string, interval int) (cl *Client, err error) {
+// It takes an interval value in seconds, and chanCapacity for the capacity
+// of the input channel
+func NewClient(host string, interval int, chanCapacity int) (cl *Client, err error) {
 
 	// We should never send more often than once per minute
 	if interval < 60 {
@@ -63,7 +64,7 @@ func NewClient(host string, interval int) (cl *Client, err error) {
 		http:       &http.Client{},
 		logger:     log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile),
 		interval:   intDur,
-		input:      make(chan MetricWithAmount, 100),
+		input:      make(chan MetricWithAmount, chanCapacity),
 		stop:       make(chan bool, 1),
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
