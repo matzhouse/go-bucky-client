@@ -1,8 +1,6 @@
 package buckyclient
 
 import (
-	// "errors"
-
 	"bytes"
 	"fmt"
 	"io"
@@ -11,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +67,7 @@ func TestClient_Client_Count(t *testing.T) {
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
+		waitGroup:  &sync.WaitGroup{},
 	}
 	defer func() {
 		close(cl.stop)
@@ -101,6 +101,7 @@ func TestClient_Client_Timer(t *testing.T) {
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
+		waitGroup:  &sync.WaitGroup{},
 	}
 	defer func() {
 		close(cl.stop)
@@ -134,6 +135,7 @@ func TestClient_Client_AverageTimer(t *testing.T) {
 		stopped:    make(chan bool, 1),
 		metrics:    make(map[Metric]Value),
 		bufferPool: newBufferPool(),
+		waitGroup:  &sync.WaitGroup{},
 	}
 	defer func() {
 		close(cl.stop)
@@ -404,9 +406,10 @@ func TestClient_Client_Stop(t *testing.T) {
 	buf := &bytes.Buffer{}
 
 	cl := &Client{
-		logger:  log.New(buf, "", log.Ldate|log.Ltime|log.Lshortfile),
-		stop:    make(chan bool, 1),
-		stopped: make(chan bool, 1),
+		logger:    log.New(buf, "", log.Ldate|log.Ltime|log.Lshortfile),
+		stop:      make(chan bool, 1),
+		stopped:   make(chan bool, 1),
+		waitGroup: &sync.WaitGroup{},
 	}
 
 	go func() {
